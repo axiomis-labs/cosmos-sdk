@@ -3,7 +3,6 @@ package keeper
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"fmt"
 	"strconv"
 	"time"
@@ -13,19 +12,19 @@ import (
 
 	corestoretypes "cosmossdk.io/core/store"
 	errorsmod "cosmossdk.io/errors"
-	"cosmossdk.io/log/v2"
+	"cosmossdk.io/log"
+	storetypes "cosmossdk.io/store/types"
 
 	"github.com/cosmos/cosmos-sdk/baseapp"
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/cosmos/cosmos-sdk/runtime"
-	storetypes "github.com/cosmos/cosmos-sdk/store/v2/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	"github.com/cosmos/cosmos-sdk/x/authz"
 )
 
-// TODO: Revisit this once we have proper gas fee framework.
+// TODO: Revisit this once we have propoer gas fee framework.
 // Tracking issues https://github.com/cosmos/cosmos-sdk/issues/9054,
 // https://github.com/cosmos/cosmos-sdk/discussions/9072
 const gasCostPerIteration = uint64(20)
@@ -48,7 +47,7 @@ func NewKeeper(storeService corestoretypes.KVStoreService, cdc codec.Codec, rout
 	}
 }
 
-// SetBankKeeper is a super ugly hack to not be breaking in v0.50 and v0.47
+// Super ugly hack to not be breaking in v0.50 and v0.47
 // DO NOT USE.
 func (k Keeper) SetBankKeeper(bk authz.BankKeeper) Keeper {
 	k.bankKeeper = bk
@@ -89,15 +88,16 @@ func (k Keeper) update(ctx context.Context, grantee, granter sdk.AccAddress, upd
 		return sdkerrors.ErrPackAny.Wrapf("cannot proto marshal %T", updated)
 	}
 
-	cdcAny, err := codectypes.NewAnyWithValue(msg)
+	any, err := codectypes.NewAnyWithValue(msg)
 	if err != nil {
 		return err
 	}
 
-	grant.Authorization = cdcAny
+	grant.Authorization = any
 	store := k.storeService.OpenKVStore(ctx)
+	store.Set(skey, k.cdc.MustMarshal(&grant))
 
-	return store.Set(skey, k.cdc.MustMarshal(&grant))
+	return nil
 }
 
 // DispatchActions attempts to execute the provided messages via authorization
@@ -242,7 +242,7 @@ func (k Keeper) DeleteGrant(ctx context.Context, grantee, granter sdk.AccAddress
 	skey := grantStoreKey(grantee, granter, msgType)
 	grant, found := k.getGrant(ctx, skey)
 	if !found {
-		return errorsmod.Wrapf(authz.ErrNoAuthorizationFound, "failed to delete grant with key %s", hex.EncodeToString(skey))
+		return errorsmod.Wrapf(authz.ErrNoAuthorizationFound, "failed to delete grant with key %s", string(skey))
 	}
 
 	if grant.Expiration != nil {

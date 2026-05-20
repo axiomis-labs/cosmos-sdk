@@ -4,10 +4,10 @@ import (
 	"fmt"
 
 	"cosmossdk.io/math"
+	"cosmossdk.io/store/prefix"
+	storetypes "cosmossdk.io/store/types"
 
 	"github.com/cosmos/cosmos-sdk/codec"
-	"github.com/cosmos/cosmos-sdk/store/v2/prefix"
-	storetypes "github.com/cosmos/cosmos-sdk/store/v2/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/address"
 	"github.com/cosmos/cosmos-sdk/types/query"
@@ -19,12 +19,12 @@ var addr1 = sdk.AccAddress([]byte("addr1"))
 
 func (s *paginationTestSuite) TestFilteredPaginations() {
 	var balances sdk.Coins
-	for i := range numBalances {
+	for i := 0; i < numBalances; i++ {
 		denom := fmt.Sprintf("foo%ddenom", i)
 		balances = append(balances, sdk.NewInt64Coin(denom, 100))
 	}
 
-	for i := range 4 {
+	for i := 0; i < 4; i++ {
 		denom := fmt.Sprintf("test%ddenom", i)
 		balances = append(balances, sdk.NewInt64Coin(denom, 250))
 	}
@@ -92,12 +92,12 @@ func (s *paginationTestSuite) TestFilteredPaginations() {
 
 func (s *paginationTestSuite) TestReverseFilteredPaginations() {
 	var balances sdk.Coins
-	for i := range numBalances {
+	for i := 0; i < numBalances; i++ {
 		denom := fmt.Sprintf("foo%ddenom", i)
 		balances = append(balances, sdk.NewInt64Coin(denom, 100))
 	}
 
-	for i := range 10 {
+	for i := 0; i < 10; i++ {
 		denom := fmt.Sprintf("test%ddenom", i)
 		balances = append(balances, sdk.NewInt64Coin(denom, 250))
 	}
@@ -170,12 +170,12 @@ func (s *paginationTestSuite) TestReverseFilteredPaginations() {
 
 func (s *paginationTestSuite) TestFilteredPaginate() {
 	var balances sdk.Coins
-	for i := range numBalances {
+	for i := 0; i < numBalances; i++ {
 		denom := fmt.Sprintf("foo%ddenom", i)
 		balances = append(balances, sdk.NewInt64Coin(denom, 100))
 	}
 
-	for i := range 5 {
+	for i := 0; i < 5; i++ {
 		denom := fmt.Sprintf("test%ddenom", i)
 		balances = append(balances, sdk.NewInt64Coin(denom, 250))
 	}

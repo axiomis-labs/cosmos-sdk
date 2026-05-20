@@ -8,7 +8,7 @@ import (
 	"cosmossdk.io/collections/indexes"
 	"cosmossdk.io/core/store"
 	errorsmod "cosmossdk.io/errors"
-	"cosmossdk.io/log/v2"
+	"cosmossdk.io/log"
 	"cosmossdk.io/math"
 
 	"github.com/cosmos/cosmos-sdk/codec"
@@ -56,10 +56,11 @@ func (b BalancesIndexes) IndexesList() []collections.Index[collections.Pair[sdk.
 
 // BaseViewKeeper implements a read only keeper implementation of ViewKeeper.
 type BaseViewKeeper struct {
-	cdc          codec.BinaryCodec
-	storeService store.KVStoreService
-	ak           types.AccountKeeper
-	logger       log.Logger
+	cdc           codec.BinaryCodec
+	storeService  store.KVStoreService
+	tStoreService store.TransientStoreService
+	ak            types.AccountKeeper
+	logger        log.Logger
 
 	Schema        collections.Schema
 	Supply        collections.Map[string, math.Int]
@@ -70,11 +71,12 @@ type BaseViewKeeper struct {
 }
 
 // NewBaseViewKeeper returns a new BaseViewKeeper.
-func NewBaseViewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, ak types.AccountKeeper, logger log.Logger) BaseViewKeeper {
+func NewBaseViewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, tStoreService store.TransientStoreService, ak types.AccountKeeper, logger log.Logger) BaseViewKeeper {
 	sb := collections.NewSchemaBuilder(storeService)
 	k := BaseViewKeeper{
 		cdc:           cdc,
 		storeService:  storeService,
+		tStoreService: tStoreService,
 		ak:            ak,
 		logger:        logger,
 		Supply:        collections.NewMap(sb, types.SupplyKey, "supply", collections.StringKey, sdk.IntValue),
@@ -106,31 +108,33 @@ func (k BaseViewKeeper) Logger() log.Logger {
 func (k BaseViewKeeper) GetAllBalances(ctx context.Context, addr sdk.AccAddress) sdk.Coins {
 	balances := sdk.NewCoins()
 	k.IterateAccountBalances(ctx, addr, func(balance sdk.Coin) bool {
-		balances = append(balances, balance)
+		balances = balances.Add(balance)
 		return false
 	})
 
-	return balances
+	return balances.Sort()
 }
 
 // GetAccountsBalances returns all the accounts balances from the store.
 func (k BaseViewKeeper) GetAccountsBalances(ctx context.Context) []types.Balance {
 	balances := make([]types.Balance, 0)
+	mapAddressToBalancesIdx := make(map[string]int)
 
 	k.IterateAllBalances(ctx, func(addr sdk.AccAddress, balance sdk.Coin) bool {
-		addrStr := addr.String()
-		if len(balances) > 0 && balances[len(balances)-1].Address == addrStr {
-			// Same address as last entry = add the coin to it.
-			balances[len(balances)-1].Coins = append(balances[len(balances)-1].Coins, balance)
+		idx, ok := mapAddressToBalancesIdx[addr.String()]
+		if ok {
+			// address is already on the set of accounts balances
+			balances[idx].Coins = balances[idx].Coins.Add(balance)
+			balances[idx].Coins.Sort()
 			return false
 		}
 
-		// New address = new entry.
 		accountBalance := types.Balance{
-			Address: addrStr,
+			Address: addr.String(),
 			Coins:   sdk.NewCoins(balance),
 		}
 		balances = append(balances, accountBalance)
+		mapAddressToBalancesIdx[addr.String()] = len(balances) - 1
 		return false
 	})
 
@@ -214,10 +218,10 @@ func (k BaseViewKeeper) spendableCoins(ctx context.Context, addr sdk.AccAddress)
 	spendable, hasNeg := total.SafeSub(locked...)
 	if hasNeg {
 		spendable = sdk.NewCoins()
-		return spendable, total
+		return
 	}
 
-	return spendable, total
+	return
 }
 
 // ValidateBalance validates all balances for a given account address returning

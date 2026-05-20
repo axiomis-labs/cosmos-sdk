@@ -14,12 +14,12 @@ import (
 
 var _ types.StakingHooks = Hooks{}
 
-// Hooks is a wrapper struct for slashing keeper
+// Hooks wrapper struct for slashing keeper
 type Hooks struct {
 	k Keeper
 }
 
-// Hooks returns the slashing hooks
+// Return the slashing hooks
 func (k Keeper) Hooks() Hooks {
 	return Hooks{k}
 }

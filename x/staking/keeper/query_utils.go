@@ -3,7 +3,8 @@ package keeper
 import (
 	"context"
 
-	storetypes "github.com/cosmos/cosmos-sdk/store/v2/types"
+	storetypes "cosmossdk.io/store/types"
+
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/x/staking/types"
 )
@@ -73,12 +74,13 @@ func (k Keeper) GetAllDelegatorDelegations(ctx context.Context, delegator sdk.Ac
 	}
 	defer iterator.Close()
 
-	for ; iterator.Valid(); iterator.Next() {
+	for i := 0; iterator.Valid(); iterator.Next() {
 		delegation, err := types.UnmarshalDelegation(k.cdc, iterator.Value())
 		if err != nil {
 			return nil, err
 		}
 		delegations = append(delegations, delegation)
+		i++
 	}
 
 	return delegations, nil
@@ -97,12 +99,13 @@ func (k Keeper) GetAllUnbondingDelegations(ctx context.Context, delegator sdk.Ac
 	}
 	defer iterator.Close()
 
-	for ; iterator.Valid(); iterator.Next() {
+	for i := 0; iterator.Valid(); iterator.Next() {
 		unbondingDelegation, err := types.UnmarshalUBD(k.cdc, iterator.Value())
 		if err != nil {
 			return nil, err
 		}
 		unbondingDelegations = append(unbondingDelegations, unbondingDelegation)
+		i++
 	}
 
 	return unbondingDelegations, nil
@@ -124,7 +127,8 @@ func (k Keeper) GetAllRedelegations(
 	srcValFilter := !(srcValAddress.Empty())
 	dstValFilter := !(dstValAddress.Empty())
 
-	var redelegations []types.Redelegation
+	redelegations := []types.Redelegation{}
+
 	for ; iterator.Valid(); iterator.Next() {
 		redelegation := types.MustUnmarshalRED(k.cdc, iterator.Value())
 		valSrcAddr, err := k.validatorAddressCodec.StringToBytes(redelegation.ValidatorSrcAddress)

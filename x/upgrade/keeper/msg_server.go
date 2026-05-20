@@ -3,8 +3,10 @@ package keeper
 import (
 	"context"
 
+	"cosmossdk.io/errors"
+	"cosmossdk.io/x/upgrade/types"
+
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/x/upgrade/types"
 )
 
 type msgServer struct {
@@ -26,11 +28,11 @@ var (
 
 // SoftwareUpgrade implements the Msg/SoftwareUpgrade Msg service.
 func (k msgServer) SoftwareUpgrade(goCtx context.Context, msg *types.MsgSoftwareUpgrade) (*types.MsgSoftwareUpgradeResponse, error) {
-	ctx := sdk.UnwrapSDKContext(goCtx)
-	if err := sdk.ValidateAuthority(ctx, k.authority, msg.Authority); err != nil {
-		return nil, err
+	if k.authority != msg.Authority {
+		return nil, errors.Wrapf(types.ErrInvalidSigner, "expected %s got %s", k.authority, msg.Authority)
 	}
 
+	ctx := sdk.UnwrapSDKContext(goCtx)
 	err := k.ScheduleUpgrade(ctx, msg.Plan)
 	if err != nil {
 		return nil, err
@@ -40,10 +42,9 @@ func (k msgServer) SoftwareUpgrade(goCtx context.Context, msg *types.MsgSoftware
 }
 
 // CancelUpgrade implements the Msg/CancelUpgrade Msg service.
-func (k msgServer) CancelUpgrade(goCtx context.Context, msg *types.MsgCancelUpgrade) (*types.MsgCancelUpgradeResponse, error) {
-	ctx := sdk.UnwrapSDKContext(goCtx)
-	if err := sdk.ValidateAuthority(ctx, k.authority, msg.Authority); err != nil {
-		return nil, err
+func (k msgServer) CancelUpgrade(ctx context.Context, msg *types.MsgCancelUpgrade) (*types.MsgCancelUpgradeResponse, error) {
+	if k.authority != msg.Authority {
+		return nil, errors.Wrapf(types.ErrInvalidSigner, "expected %s got %s", k.authority, msg.Authority)
 	}
 
 	err := k.ClearUpgradePlan(ctx)

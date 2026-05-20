@@ -144,10 +144,7 @@ func (k Keeper) HandleValidatorSignature(ctx context.Context, addr cryptotypes.A
 					sdk.NewAttribute(types.AttributeKeyBurnedCoins, coinsBurned.String()),
 				),
 			)
-
-			if err := k.sk.Jail(sdkCtx, consAddr); err != nil {
-				return fmt.Errorf("failed to jail validator: %w", err)
-			}
+			k.sk.Jail(sdkCtx, consAddr)
 
 			downtimeJailDur, err := k.DowntimeJailDuration(ctx)
 			if err != nil {

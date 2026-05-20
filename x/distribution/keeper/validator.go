@@ -11,7 +11,7 @@ import (
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 )
 
-// initializeValidator initializes rewards for a new validator
+// initialize rewards for a new validator
 func (k Keeper) initializeValidator(ctx context.Context, val stakingtypes.ValidatorI) error {
 	valBz, err := k.stakingKeeper.ValidatorAddressCodec().StringToBytes(val.GetOperator())
 	if err != nil {
@@ -40,7 +40,7 @@ func (k Keeper) initializeValidator(ctx context.Context, val stakingtypes.Valida
 	return err
 }
 
-// IncrementValidatorPeriod increments validator period, returning the period just ended
+// increment validator period, returning the period just ended
 func (k Keeper) IncrementValidatorPeriod(ctx context.Context, val stakingtypes.ValidatorI) (uint64, error) {
 	valBz, err := k.stakingKeeper.ValidatorAddressCodec().StringToBytes(val.GetOperator())
 	if err != nil {
@@ -116,22 +116,20 @@ func (k Keeper) IncrementValidatorPeriod(ctx context.Context, val stakingtypes.V
 	return rewards.Period, nil
 }
 
-// incrementReferenceCount increments the reference count for a historical rewards value
+// increment the reference count for a historical rewards value
 func (k Keeper) incrementReferenceCount(ctx context.Context, valAddr sdk.ValAddress, period uint64) error {
 	historical, err := k.GetValidatorHistoricalRewards(ctx, valAddr, period)
 	if err != nil {
 		return err
 	}
-
-	historical.ReferenceCount++
 	if historical.ReferenceCount > 2 {
 		panic("reference count should never exceed 2")
 	}
-
+	historical.ReferenceCount++
 	return k.SetValidatorHistoricalRewards(ctx, valAddr, period, historical)
 }
 
-// decrementReferenceCount decrements the reference count for a historical rewards value, and delete if zero references remain
+// decrement the reference count for a historical rewards value, and delete if zero references remain
 func (k Keeper) decrementReferenceCount(ctx context.Context, valAddr sdk.ValAddress, period uint64) error {
 	historical, err := k.GetValidatorHistoricalRewards(ctx, valAddr, period)
 	if err != nil {
@@ -167,10 +165,7 @@ func (k Keeper) updateValidatorSlashFraction(ctx context.Context, valAddr sdk.Va
 	}
 
 	// increment reference count on period we need to track
-	err = k.incrementReferenceCount(ctx, valAddr, newPeriod)
-	if err != nil {
-		return err
-	}
+	k.incrementReferenceCount(ctx, valAddr, newPeriod)
 
 	slashEvent := types.NewValidatorSlashEvent(newPeriod, fraction)
 	height := uint64(sdkCtx.BlockHeight())

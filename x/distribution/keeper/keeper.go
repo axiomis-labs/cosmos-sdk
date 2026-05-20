@@ -7,7 +7,7 @@ import (
 	"cosmossdk.io/collections"
 	"cosmossdk.io/core/store"
 	errorsmod "cosmossdk.io/errors"
-	"cosmossdk.io/log/v2"
+	"cosmossdk.io/log"
 
 	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -35,11 +35,8 @@ type Keeper struct {
 
 // NewKeeper creates a new distribution Keeper instance
 func NewKeeper(
-	cdc codec.BinaryCodec,
-	storeService store.KVStoreService,
-	ak types.AccountKeeper,
-	bk types.BankKeeper,
-	sk types.StakingKeeper,
+	cdc codec.BinaryCodec, storeService store.KVStoreService,
+	ak types.AccountKeeper, bk types.BankKeeper, sk types.StakingKeeper,
 	feeCollectorName, authority string,
 ) Keeper {
 	// ensure distribution module account is set
@@ -65,7 +62,6 @@ func NewKeeper(
 		panic(err)
 	}
 	k.Schema = schema
-
 	return k
 }
 
@@ -103,10 +99,11 @@ func (k Keeper) SetWithdrawAddr(ctx context.Context, delegatorAddr, withdrawAddr
 		),
 	)
 
-	return k.SetDelegatorWithdrawAddr(ctx, delegatorAddr, withdrawAddr)
+	k.SetDelegatorWithdrawAddr(ctx, delegatorAddr, withdrawAddr)
+	return nil
 }
 
-// WithdrawDelegationRewards withdraws rewards from a delegation
+// withdraw rewards from a delegation
 func (k Keeper) WithdrawDelegationRewards(ctx context.Context, delAddr sdk.AccAddress, valAddr sdk.ValAddress) (sdk.Coins, error) {
 	val, err := k.stakingKeeper.Validator(ctx, valAddr)
 	if err != nil {
@@ -126,13 +123,8 @@ func (k Keeper) WithdrawDelegationRewards(ctx context.Context, delAddr sdk.AccAd
 		return nil, types.ErrEmptyDelegationDistInfo
 	}
 
-	// determine where rewards for this delegator should go
-	dest, err := k.resolveWithdrawDestinationStrict(ctx, delAddr)
-	if err != nil {
-		return nil, err
-	}
-
-	rewards, err := k.withdrawDelegationRewards(ctx, val, del, dest)
+	// withdraw rewards
+	rewards, err := k.withdrawDelegationRewards(ctx, val, del)
 	if err != nil {
 		return nil, err
 	}
@@ -145,7 +137,7 @@ func (k Keeper) WithdrawDelegationRewards(ctx context.Context, delAddr sdk.AccAd
 	return rewards, nil
 }
 
-// WithdrawValidatorCommission withdraws validator commission.
+// withdraw validator commission
 func (k Keeper) WithdrawValidatorCommission(ctx context.Context, valAddr sdk.ValAddress) (sdk.Coins, error) {
 	// fetch validator accumulated commission
 	accumCommission, err := k.GetValidatorAccumulatedCommission(ctx, valAddr)
@@ -158,10 +150,7 @@ func (k Keeper) WithdrawValidatorCommission(ctx context.Context, valAddr sdk.Val
 	}
 
 	commission, remainder := accumCommission.Commission.TruncateDecimal()
-	err = k.SetValidatorAccumulatedCommission(ctx, valAddr, types.ValidatorAccumulatedCommission{Commission: remainder}) // leave remainder to withdraw later
-	if err != nil {
-		return nil, err
-	}
+	k.SetValidatorAccumulatedCommission(ctx, valAddr, types.ValidatorAccumulatedCommission{Commission: remainder}) // leave remainder to withdraw later
 
 	// update outstanding
 	outstanding, err := k.GetValidatorOutstandingRewards(ctx, valAddr)
@@ -175,13 +164,13 @@ func (k Keeper) WithdrawValidatorCommission(ctx context.Context, valAddr sdk.Val
 	}
 
 	if !commission.IsZero() {
-		// determine where commission for this validator should go
-		dest, err := k.resolveWithdrawDestinationStrict(ctx, sdk.AccAddress(valAddr))
+		accAddr := sdk.AccAddress(valAddr)
+		withdrawAddr, err := k.GetDelegatorWithdrawAddr(ctx, accAddr)
 		if err != nil {
 			return nil, err
 		}
 
-		err = k.bankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, dest.ResolvedWithdrawAddr, commission)
+		err = k.bankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, withdrawAddr, commission)
 		if err != nil {
 			return nil, err
 		}

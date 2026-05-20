@@ -7,9 +7,10 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"cosmossdk.io/store/prefix"
+	storetypes "cosmossdk.io/store/types"
+
 	"github.com/cosmos/cosmos-sdk/runtime"
-	"github.com/cosmos/cosmos-sdk/store/v2/prefix"
-	storetypes "github.com/cosmos/cosmos-sdk/store/v2/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/query"
 	"github.com/cosmos/cosmos-sdk/x/staking/types"
@@ -33,7 +34,7 @@ func (k Querier) Validators(ctx context.Context, req *types.QueryValidatorsReque
 	}
 
 	// validate the provided status, return all the validators if the status is empty
-	if req.Status != "" && (req.Status != types.Bonded.String() && req.Status != types.Unbonded.String() && req.Status != types.Unbonding.String()) {
+	if req.Status != "" && !(req.Status == types.Bonded.String() || req.Status == types.Unbonded.String() || req.Status == types.Unbonding.String()) {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid validator status %s", req.Status)
 	}
 
@@ -377,6 +378,13 @@ func (k Querier) DelegatorUnbondingDelegations(ctx context.Context, req *types.Q
 	return &types.QueryDelegatorUnbondingDelegationsResponse{
 		UnbondingResponses: unbondingDelegations, Pagination: pageRes,
 	}, nil
+}
+
+func (k Querier) AllowedDelegationTransferReceivers(ctx context.Context, _ *types.QueryAllowedDelegationTransferReceiversRequest) (*types.QueryAllowedDelegationTransferReceiversResponse, error) {
+	resp := &types.QueryAllowedDelegationTransferReceiversResponse{
+		Addresses: k.GetAllAllowedDelegationTransferReceivers(ctx),
+	}
+	return resp, nil
 }
 
 // HistoricalInfo queries the historical info for given height

@@ -206,7 +206,7 @@ func (k Keeper) SlashWithInfractionReason(ctx context.Context, consAddr sdk.Cons
 	return k.Slash(ctx, consAddr, infractionHeight, power, slashFactor)
 }
 
-// Jail jails a validator
+// jail a validator
 func (k Keeper) Jail(ctx context.Context, consAddr sdk.ConsAddress) error {
 	validator := k.mustGetValidatorByConsAddr(ctx, consAddr)
 	if err := k.jailValidator(ctx, validator); err != nil {
@@ -218,7 +218,7 @@ func (k Keeper) Jail(ctx context.Context, consAddr sdk.ConsAddress) error {
 	return nil
 }
 
-// Unjail unjails a validator
+// unjail a validator
 func (k Keeper) Unjail(ctx context.Context, consAddr sdk.ConsAddress) error {
 	validator := k.mustGetValidatorByConsAddr(ctx, consAddr)
 	if err := k.unjailValidator(ctx, validator); err != nil {
@@ -229,7 +229,7 @@ func (k Keeper) Unjail(ctx context.Context, consAddr sdk.ConsAddress) error {
 	return nil
 }
 
-// SlashUnbondingDelegation slashes an unbonding delegation and update the pool
+// slash an unbonding delegation and update the pool
 // return the amount that would have been slashed assuming
 // the unbonding delegation had enough stake to slash
 // (the amount actually slashed may be less if there's
@@ -285,9 +285,9 @@ func (k Keeper) SlashUnbondingDelegation(ctx context.Context, unbondingDelegatio
 	return totalSlashAmount, nil
 }
 
-// SlashRedelegation slashes a redelegation and update the pool
+// slash a redelegation and update the pool
 // return the amount that would have been slashed assuming
-// the redelegation had enough stake to slash
+// the unbonding delegation had enough stake to slash
 // (the amount actually slashed may be less if there's
 // insufficient stake remaining)
 // NOTE this is only slashing for prior infractions from the source validator
@@ -392,7 +392,7 @@ func (k Keeper) SlashRedelegation(ctx context.Context, srcValidator types.Valida
 		}
 
 		// tokens of a redelegation currently live in the destination validator
-		// therefore we must burn tokens from the destination-validator's bonding status
+		// therefor we must burn tokens from the destination-validator's bonding status
 		switch {
 		case dstValidator.IsBonded():
 			bondedBurnedAmount = bondedBurnedAmount.Add(tokensToBurn)

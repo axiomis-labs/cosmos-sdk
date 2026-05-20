@@ -7,7 +7,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/x/distribution/types"
 )
 
-// GetValidatorOutstandingRewardsCoins gets outstanding rewards
+// get outstanding rewards
 func (k Keeper) GetValidatorOutstandingRewardsCoins(ctx context.Context, val sdk.ValAddress) (sdk.DecCoins, error) {
 	rewards, err := k.GetValidatorOutstandingRewards(ctx, val)
 	if err != nil {

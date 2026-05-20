@@ -7,11 +7,11 @@ import (
 	"cosmossdk.io/collections"
 	"cosmossdk.io/core/store"
 	errorsmod "cosmossdk.io/errors"
-	"cosmossdk.io/log/v2"
+	"cosmossdk.io/log"
 	"cosmossdk.io/math"
+	storetypes "cosmossdk.io/store/types"
 
 	"github.com/cosmos/cosmos-sdk/codec"
-	storetypes "github.com/cosmos/cosmos-sdk/store/v2/types"
 	"github.com/cosmos/cosmos-sdk/telemetry"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
@@ -60,8 +60,8 @@ type BaseSendKeeper struct {
 	cdc          codec.BinaryCodec
 	ak           types.AccountKeeper
 	storeService store.KVStoreService
-	logger       log.Logger
 	objStoreKey  storetypes.StoreKey
+	logger       log.Logger
 
 	// list of addresses that are restricted from receiving transactions
 	blockedAddrs map[string]bool
@@ -76,6 +76,8 @@ type BaseSendKeeper struct {
 func NewBaseSendKeeper(
 	cdc codec.BinaryCodec,
 	storeService store.KVStoreService,
+	tStoreService store.TransientStoreService,
+	objStoreKey storetypes.StoreKey,
 	ak types.AccountKeeper,
 	blockedAddrs map[string]bool,
 	authority string,
@@ -86,10 +88,11 @@ func NewBaseSendKeeper(
 	}
 
 	return BaseSendKeeper{
-		BaseViewKeeper:  NewBaseViewKeeper(cdc, storeService, ak, logger),
+		BaseViewKeeper:  NewBaseViewKeeper(cdc, storeService, tStoreService, ak, logger),
 		cdc:             cdc,
 		ak:              ak,
 		storeService:    storeService,
+		objStoreKey:     objStoreKey,
 		blockedAddrs:    blockedAddrs,
 		authority:       authority,
 		logger:          logger,
@@ -127,11 +130,11 @@ func (k BaseSendKeeper) GetParams(ctx context.Context) (params types.Params) {
 //
 // Note: params.SendEnabled is deprecated but it should be here regardless.
 func (k BaseSendKeeper) SetParams(ctx context.Context, params types.Params) error {
-	// Normally SendEnabled is deprecated, but we still support it for backwards
+	// Normally SendEnabled is deprecated but we still support it for backwards
 	// compatibility. Using params.Validate() would fail due to the SendEnabled
 	// deprecation.
-	if len(params.SendEnabled) > 0 {
-		k.SetAllSendEnabled(ctx, params.SendEnabled)
+	if len(params.SendEnabled) > 0 { //nolint:staticcheck // SA1019: params.SendEnabled is deprecated
+		k.SetAllSendEnabled(ctx, params.SendEnabled) //nolint:staticcheck // SA1019: params.SendEnabled is deprecated
 
 		// override params without SendEnabled
 		params = types.NewParams(params.DefaultSendEnabled)
@@ -154,6 +157,29 @@ func (k BaseSendKeeper) InputOutputCoins(ctx context.Context, input types.Input,
 		return err
 	}
 
+	if err := k.validateCoinsBeforeSend(ctx, inAddress, input.Coins); err != nil {
+		return err
+	}
+
+	for _, out := range outputs {
+		outAddress, err := k.ak.AddressCodec().StringToBytes(out.Address)
+		if err != nil {
+			return err
+		}
+
+		for _, coin := range out.Coins {
+			newOutAddress, err := k.sendRestriction.apply(ctx, inAddress, outAddress, coin)
+			if err != nil {
+				return err
+			}
+
+			err = k.sendCoins(ctx, inAddress, newOutAddress, sdk.NewCoins(coin))
+			if err != nil {
+				return err
+			}
+		}
+	}
+
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	sdkCtx.EventManager().EmitEvent(
 		sdk.NewEvent(
@@ -162,82 +188,41 @@ func (k BaseSendKeeper) InputOutputCoins(ctx context.Context, input types.Input,
 		),
 	)
 
-	// ensure all coins can be sent
-	type toSend struct {
-		AddressStr string
-		AddressBz  []byte
-		Coins      sdk.Coins
-	}
-	sending := make([]toSend, 0)
-
-	for _, out := range outputs {
-		outAddress, err := k.ak.AddressCodec().StringToBytes(out.Address)
-		if err != nil {
-			return err
-		}
-
-		updatedAddressBz, err := k.sendRestriction.apply(ctx, inAddress, outAddress, out.Coins)
-		if err != nil {
-			return err
-		}
-
-		updatedAddressStr, err := k.ak.AddressCodec().BytesToString(updatedAddressBz)
-		if err != nil {
-			return err
-		}
-
-		sending = append(sending, toSend{
-			AddressBz:  updatedAddressBz,
-			AddressStr: updatedAddressStr,
-			Coins:      out.Coins,
-		})
-
-		// Create account if recipient does not exist.
-		//
-		// NOTE: This should ultimately be removed in favor a more flexible approach
-		// such as delegated fee messages.
-		accExists := k.ak.HasAccount(ctx, updatedAddressBz)
-		if !accExists {
-			defer telemetry.IncrCounter(1, "new", "account") //nolint:staticcheck // TODO: switch to OpenTelemetry
-			k.ak.SetAccount(ctx, k.ak.NewAccountWithAddress(ctx, updatedAddressBz))
-		}
-	}
-
-	if err := k.subUnlockedCoins(ctx, inAddress, input.Coins); err != nil {
-		return err
-	}
-
-	for _, out := range sending {
-		if err := k.addCoins(ctx, out.AddressBz, out.Coins); err != nil {
-			return err
-		}
-		sdkCtx.EventManager().EmitEvent(
-			sdk.NewEvent(
-				types.EventTypeTransfer,
-				sdk.NewAttribute(types.AttributeKeyRecipient, out.AddressStr),
-				sdk.NewAttribute(types.AttributeKeySender, input.Address),
-				sdk.NewAttribute(sdk.AttributeKeyAmount, out.Coins.String()),
-			),
-		)
-	}
-
 	return nil
 }
 
 // SendCoins transfers amt coins from a sending account to a receiving account.
 // An error is returned upon failure.
 func (k BaseSendKeeper) SendCoins(ctx context.Context, fromAddr, toAddr sdk.AccAddress, amt sdk.Coins) error {
-	if !amt.IsValid() {
-		return errorsmod.Wrap(sdkerrors.ErrInvalidCoins, amt.String())
-	}
-
-	var err error
-	toAddr, err = k.sendRestriction.apply(ctx, fromAddr, toAddr, amt)
-	if err != nil {
+	if err := k.validateCoinsBeforeSend(ctx, fromAddr, amt); err != nil {
 		return err
 	}
 
-	err = k.subUnlockedCoins(ctx, fromAddr, amt)
+	for _, coin := range amt {
+		newToAddr, err := k.sendRestriction.apply(ctx, fromAddr, toAddr, coin)
+		if err != nil {
+			return err
+		}
+
+		err = k.sendCoins(ctx, fromAddr, newToAddr, sdk.NewCoins(coin))
+		if err != nil {
+			return err
+		}
+	}
+
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	// bech32 encoding is expensive! Only do it once for fromAddr
+	fromAddrString := fromAddr.String()
+	sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+		sdk.EventTypeMessage,
+		sdk.NewAttribute(types.AttributeKeySender, fromAddrString),
+	))
+
+	return nil
+}
+
+func (k BaseSendKeeper) sendCoins(ctx context.Context, fromAddr, toAddr sdk.AccAddress, amt sdk.Coins) error {
+	err := k.subUnlockedCoins(ctx, fromAddr, amt, true) // only sub this coin
 	if err != nil {
 		return err
 	}
@@ -248,9 +233,7 @@ func (k BaseSendKeeper) SendCoins(ctx context.Context, fromAddr, toAddr sdk.AccA
 	}
 
 	k.ensureAccountCreated(ctx, toAddr)
-	if err := k.emitSendCoinsEvents(ctx, fromAddr, toAddr, amt); err != nil {
-		return err
-	}
+	k.emitSendCoinsEvents(ctx, fromAddr, toAddr, amt)
 	return nil
 }
 
@@ -261,55 +244,34 @@ func (k BaseSendKeeper) ensureAccountCreated(ctx context.Context, toAddr sdk.Acc
 	// such as delegated fee messages.
 	accExists := k.ak.HasAccount(ctx, toAddr)
 	if !accExists {
-		defer telemetry.IncrCounter(1, "new", "account") //nolint:staticcheck // TODO: switch to OpenTelemetry
+		defer telemetry.IncrCounter(1, "new", "account")
 		k.ak.SetAccount(ctx, k.ak.NewAccountWithAddress(ctx, toAddr))
 	}
 }
 
-// emitSendCoinsEvents emit send coins events.
-func (k BaseSendKeeper) emitSendCoinsEvents(ctx context.Context, fromAddr, toAddr sdk.AccAddress, amt sdk.Coins) error {
-	// bech32 encoding is expensive! Only do it once for fromAddr
-	fromAddrString, err := k.ak.AddressCodec().BytesToString(fromAddr)
-	if err != nil {
-		return err
-	}
-
-	toAddrString, err := k.ak.AddressCodec().BytesToString(toAddr)
-	if err != nil {
-		return err
-	}
-
+func (k BaseSendKeeper) emitSendCoinsEvents(ctx context.Context, fromAddr, toAddr sdk.AccAddress, amt sdk.Coins) {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
-	sdkCtx.EventManager().EmitEvents(sdk.Events{
+	sdkCtx.EventManager().EmitEvent(
 		sdk.NewEvent(
 			types.EventTypeTransfer,
-			sdk.NewAttribute(types.AttributeKeyRecipient, toAddrString),
-			sdk.NewAttribute(types.AttributeKeySender, fromAddrString),
+			sdk.NewAttribute(types.AttributeKeyRecipient, toAddr.String()),
+			sdk.NewAttribute(types.AttributeKeySender, fromAddr.String()),
 			sdk.NewAttribute(sdk.AttributeKeyAmount, amt.String()),
 		),
-		sdk.NewEvent(
-			sdk.EventTypeMessage,
-			sdk.NewAttribute(types.AttributeKeySender, fromAddrString),
-		),
-	})
-	return nil
+	)
 }
 
-// subUnlockedCoins removes the unlocked amt coins of the given account.
-// An error is returned if the resulting balance is negative.
-//
-// CONTRACT: The provided amount (amt) must be valid, non-negative coins.
-//
-// A coin_spent event is emitted after the operation.
-func (k BaseSendKeeper) subUnlockedCoins(ctx context.Context, addr sdk.AccAddress, amt sdk.Coins) error {
+// validateCoinsBeforeSend is checks extracted from subUnlockedCoins to be run before sendRestrictionFn inside SendCoins
+func (k BaseSendKeeper) validateCoinsBeforeSend(ctx context.Context, addr sdk.AccAddress, amt sdk.Coins) error {
+	if !amt.IsValid() {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidCoins, amt.String())
+	}
+
 	lockedCoins := k.LockedCoins(ctx, addr)
 
 	for _, coin := range amt {
 		balance := k.GetBalance(ctx, addr, coin.Denom)
-		ok, locked := lockedCoins.Find(coin.Denom)
-		if !ok {
-			locked = sdk.Coin{Denom: coin.Denom, Amount: math.ZeroInt()}
-		}
+		locked := sdk.NewCoin(coin.Denom, lockedCoins.AmountOf(coin.Denom))
 
 		spendable, hasNeg := sdk.Coins{balance}.SafeSub(locked)
 		if hasNeg {
@@ -319,7 +281,7 @@ func (k BaseSendKeeper) subUnlockedCoins(ctx context.Context, addr sdk.AccAddres
 
 		if _, hasNeg := spendable.SafeSub(coin); hasNeg {
 			if len(spendable) == 0 {
-				spendable = sdk.Coins{sdk.Coin{Denom: coin.Denom, Amount: math.ZeroInt()}}
+				spendable = sdk.Coins{sdk.NewCoin(coin.Denom, math.ZeroInt())}
 			}
 			return errorsmod.Wrapf(
 				sdkerrors.ErrInsufficientFunds,
@@ -327,10 +289,28 @@ func (k BaseSendKeeper) subUnlockedCoins(ctx context.Context, addr sdk.AccAddres
 				spendable, coin,
 			)
 		}
+	}
+
+	return nil
+}
+
+// subUnlockedCoins removes the unlocked amt coins of the given account. An error is
+// returned if the resulting balance is negative or the initial amount is invalid.
+// A coin_spent event is emitted after.
+func (k BaseSendKeeper) subUnlockedCoins(ctx context.Context, addr sdk.AccAddress, amt sdk.Coins, skipValidation bool) error {
+	if !skipValidation {
+		err := k.validateCoinsBeforeSend(ctx, addr, amt)
+		if err != nil {
+			return err
+		}
+	}
+
+	for _, coin := range amt {
+		balance := k.GetBalance(ctx, addr, coin.Denom)
 
 		newBalance := balance.Sub(coin)
 
-		if err := k.UncheckedSetBalance(ctx, addr, newBalance); err != nil {
+		if err := k.setBalance(ctx, addr, newBalance); err != nil {
 			return err
 		}
 	}
@@ -343,17 +323,18 @@ func (k BaseSendKeeper) subUnlockedCoins(ctx context.Context, addr sdk.AccAddres
 	return nil
 }
 
-// addCoins increases the balance of the given address by the specified amount.
-//
-// CONTRACT: The provided amount (amt) must be valid, non-negative coins.
-//
-// It emits a coin_received event after the operation.
+// addCoins increase the addr balance by the given amt. Fails if the provided
+// amt is invalid. It emits a coin received event.
 func (k BaseSendKeeper) addCoins(ctx context.Context, addr sdk.AccAddress, amt sdk.Coins) error {
+	if !amt.IsValid() {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidCoins, amt.String())
+	}
+
 	for _, coin := range amt {
 		balance := k.GetBalance(ctx, addr, coin.Denom)
 		newBalance := balance.Add(coin)
 
-		err := k.UncheckedSetBalance(ctx, addr, newBalance)
+		err := k.setBalance(ctx, addr, newBalance)
 		if err != nil {
 			return err
 		}
@@ -368,10 +349,8 @@ func (k BaseSendKeeper) addCoins(ctx context.Context, addr sdk.AccAddress, amt s
 	return nil
 }
 
-// UncheckedSetBalance sets the coin balance for an account by address.
-// Warning: This method does not check invariants around locked balances, does not update supply properly,
-// and does not emit send events! It is only intended for use as part of a low level library for managing balances.
-func (k BaseSendKeeper) UncheckedSetBalance(ctx context.Context, addr sdk.AccAddress, balance sdk.Coin) error {
+// setBalance sets the coin balance for an account by address.
+func (k BaseSendKeeper) setBalance(ctx context.Context, addr sdk.AccAddress, balance sdk.Coin) error {
 	if !balance.IsValid() {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidCoins, balance.String())
 	}
@@ -382,8 +361,14 @@ func (k BaseSendKeeper) UncheckedSetBalance(ctx context.Context, addr sdk.AccAdd
 		if err != nil {
 			return err
 		}
+		// set transient balance which will be emitted in the Endblocker
+		k.setTransientBalance(sdk.UnwrapSDKContext(ctx), addr, balance)
 		return nil
 	}
+
+	// set transient balance which will be emitted in the Endblocker
+	k.setTransientBalance(sdk.UnwrapSDKContext(ctx), addr, balance)
+
 	return k.Balances.Set(ctx, collections.Join(addr, balance.Denom), balance.Amount)
 }
 
@@ -546,7 +531,7 @@ func (r *sendRestriction) clear() {
 var _ types.SendRestrictionFn = (*sendRestriction)(nil).apply
 
 // apply applies the send restriction if there is one. If not, it's a no-op.
-func (r *sendRestriction) apply(ctx context.Context, fromAddr, toAddr sdk.AccAddress, amt sdk.Coins) (sdk.AccAddress, error) {
+func (r *sendRestriction) apply(ctx context.Context, fromAddr, toAddr sdk.AccAddress, amt sdk.Coin) (sdk.AccAddress, error) {
 	if r == nil || r.fn == nil {
 		return toAddr, nil
 	}

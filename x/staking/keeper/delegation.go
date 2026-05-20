@@ -10,8 +10,8 @@ import (
 	corestore "cosmossdk.io/core/store"
 	errorsmod "cosmossdk.io/errors"
 	"cosmossdk.io/math"
+	storetypes "cosmossdk.io/store/types"
 
-	storetypes "github.com/cosmos/cosmos-sdk/store/v2/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	"github.com/cosmos/cosmos-sdk/x/staking/types"
@@ -273,11 +273,7 @@ func (k Keeper) GetDelegatorUnbonding(ctx context.Context, delegator sdk.AccAddr
 		}
 		return false
 	})
-	if err != nil {
-		return unbonding, err
-	}
-
-	return unbonding, nil
+	return unbonding, err
 }
 
 // IterateDelegatorUnbondingDelegations iterates through a delegator's unbonding delegations.
@@ -303,7 +299,7 @@ func (k Keeper) IterateDelegatorUnbondingDelegations(ctx context.Context, delega
 	return nil
 }
 
-// GetDelegatorBonded returns the total amount a delegator has bonded.
+// GetDelegatorBonded returs the total amount a delegator has bonded.
 func (k Keeper) GetDelegatorBonded(ctx context.Context, delegator sdk.AccAddress) (math.Int, error) {
 	bonded := math.LegacyZeroDec()
 
@@ -353,7 +349,6 @@ func (k Keeper) IterateDelegatorRedelegations(ctx context.Context, delegator sdk
 	if err != nil {
 		return err
 	}
-	defer iterator.Close()
 
 	for ; iterator.Valid(); iterator.Next() {
 		red, err := types.UnmarshalRED(k.cdc, iterator.Value())
@@ -561,7 +556,6 @@ func (k Keeper) GetRedelegations(ctx context.Context, delegator sdk.AccAddress, 
 	if err != nil {
 		return nil, err
 	}
-	defer iterator.Close()
 
 	i := 0
 	for ; iterator.Valid() && i < int(maxRetrieve); iterator.Next() {
@@ -636,7 +630,7 @@ func (k Keeper) HasReceivingRedelegation(ctx context.Context, delAddr sdk.AccAdd
 func (k Keeper) HasMaxRedelegationEntries(ctx context.Context, delegatorAddr sdk.AccAddress, validatorSrcAddr, validatorDstAddr sdk.ValAddress) (bool, error) {
 	red, err := k.GetRedelegation(ctx, delegatorAddr, validatorSrcAddr, validatorDstAddr)
 	if err != nil {
-		if errors.Is(err, types.ErrNoRedelegation) {
+		if err == types.ErrNoRedelegation {
 			return false, nil
 		}
 
@@ -679,8 +673,8 @@ func (k Keeper) SetRedelegation(ctx context.Context, red types.Redelegation) err
 	return store.Set(types.GetREDByValDstIndexKey(delegatorAddress, valSrcAddr, valDestAddr), []byte{})
 }
 
-// SetRedelegationEntry adds an entry to the redelegation at the given
-// addresses. It creates the redelegation if it does not exist.
+// SetRedelegationEntry adds an entry to the unbonding delegation at the given
+// addresses. It creates the unbonding delegation if it does not exist.
 func (k Keeper) SetRedelegationEntry(ctx context.Context,
 	delegatorAddr sdk.AccAddress, validatorSrcAddr,
 	validatorDstAddr sdk.ValAddress, creationHeight int64,
@@ -1073,22 +1067,18 @@ func (k Keeper) getBeginInfo(
 	ctx context.Context, valSrcAddr sdk.ValAddress,
 ) (completionTime time.Time, height int64, completeNow bool, err error) {
 	validator, err := k.GetValidator(ctx, valSrcAddr)
-	if err != nil && !errors.Is(err, types.ErrNoValidatorFound) {
-		return time.Time{}, 0, false, err
-	}
-	if errors.Is(err, types.ErrNoValidatorFound) {
-		// The source validator may have been removed by Unbond when it was already
-		// unbonded and this redelegation consumed its final remaining shares.
-		return time.Time{}, 0, true, nil
+	if err != nil && errors.Is(err, types.ErrNoValidatorFound) {
+		return
 	}
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	unbondingTime, err := k.UnbondingTime(ctx)
 	if err != nil {
-		return time.Time{}, 0, false, err
+		return
 	}
 
+	// TODO: When would the validator not be found?
 	switch {
-	case validator.IsBonded():
+	case errors.Is(err, types.ErrNoValidatorFound) || validator.IsBonded():
 		// the longest wait - just unbonding period from now
 		completionTime = sdkCtx.BlockHeader().Time.Add(unbondingTime)
 		height = sdkCtx.BlockHeight()
