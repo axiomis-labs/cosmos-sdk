@@ -1,10 +1,10 @@
 module cosmossdk.io/math
 
-go 1.23.0
+go 1.26.2
 
 require (
-	github.com/stretchr/testify v1.10.0
-	golang.org/x/exp v0.0.0-20250305212735-054e65f0b394
+	github.com/stretchr/testify v1.11.1
+	golang.org/x/exp v0.0.0-20250106191152-7588d65b2ba8
 	sigs.k8s.io/yaml v1.4.0
 )
 

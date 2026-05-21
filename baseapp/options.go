@@ -5,7 +5,8 @@ import (
 	"io"
 	"math"
 
-	"github.com/axiomis-labs/metrics"
+	"github.com/axiomis-labs/metrics/v2"
+	"github.com/axiomis-labs/metrics/v2/flightrecorder"
 	dbm "github.com/cosmos/cosmos-db"
 
 	sdkmetrics "cosmossdk.io/store/metrics"
@@ -404,10 +405,40 @@ func (app *BaseApp) SetGRPCQueryRouter(grpcQueryRouter *GRPCQueryRouter) {
 	app.grpcQueryRouter = grpcQueryRouter
 }
 
-func (app *BaseApp) SetTraceFlightRecorder(tr *metrics.TraceRecorder) {
+func (app *BaseApp) SetTraceFlightRecorder(tr flightrecorder.TraceFlightRecorder) {
 	app.traceFlightRecorder = tr
 }
 
-func SetTraceFlightRecorder(tr *metrics.TraceRecorder) func(*BaseApp) {
+func SetTraceFlightRecorder(tr flightrecorder.TraceFlightRecorder) func(*BaseApp) {
 	return func(app *BaseApp) { app.traceFlightRecorder = tr }
+}
+
+func (app *BaseApp) SetMeter(m metrics.Meter) {
+	app.meter = m
+}
+
+func (app *BaseApp) Meter() metrics.Meter {
+	return app.meter
+}
+
+func SetMeter(m metrics.Meter) func(*BaseApp) {
+	return func(app *BaseApp) { app.meter = m }
+}
+
+// SetTxResultsPostHook is used to set txResultsPostHook.
+// txResultsPostHook can be used to alter TxResults inside block results,
+// For example, to fix EVM transaction logs and put correct tx and msg indexes in them, since
+// we can't do that during execution of individual messages (we do not track indexes throughout block execution,
+// thus can only fix them after block is ready)
+func (app *BaseApp) SetTxResultsPostHook(hookFn TxResultsPostHook) {
+	app.txResultsPostHook = hookFn
+}
+
+// SetTxResultsPostHook is used to set txResultsPostHook.
+// txResultsPostHook can be used to alter TxResults inside block results,
+// For example, to fix EVM transaction logs and put correct tx and msg indexes in them, since
+// we can't do that during execution of individual messages (we do not track indexes throughout block execution,
+// thus can only fix them after block is ready)
+func SetTxResultsPostHook(hookFn TxResultsPostHook) func(*BaseApp) {
+	return func(app *BaseApp) { app.txResultsPostHook = hookFn }
 }
